@@ -1,0 +1,12 @@
+data/
+
+.venv/
+env/
+venv/
+
+__pycache__/
+*.pyc
+
+.DS_Store
+
+training_loss_plot.png
