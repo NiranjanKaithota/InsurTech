@@ -12,6 +12,7 @@ from tensorflow.keras.optimizers import Adam  # Import Adam
 import matplotlib.pyplot as plt
 import tensorflow.keras.callbacks as callbacks
 from tensorflow.keras.callbacks import EarlyStopping
+import joblib # Add this at the top with other imports
 
 # --- 1. Configuration ---
 DATA_DIR = "data/raw"
@@ -62,30 +63,24 @@ def load_data():
 
 # --- 3. Preprocessing Function ---
 def preprocess_data(X, y):
-    """Scales the data and splits into train/test sets."""
+    """Scales the data, saves the scaler, and splits into train/test sets."""
     
-    # We must scale the features. We use MinMaxScaler.
-    # We must reshape to 2D for the scaler, then reshape back to 3D.
-    
-    # Create a new scaler object for this dataset
     scaler = MinMaxScaler()
     
-    # Reshape to (samples * timesteps, features)
+    # Reshape to 2D, fit, and transform
     X_reshaped = X.reshape(-1, len(FEATURES))
-    
-    # Fit and transform the data
     X_scaled_reshaped = scaler.fit_transform(X_reshaped)
-    
-    # Reshape back to (samples, timesteps, features)
     X_scaled = X_scaled_reshaped.reshape(X.shape)
     
-    # Split the data (using 20% for validation)
+    # --- NEW: Save the scaler for later use! ---
+    scaler_filename = "models/scaler.pkl"
+    joblib.dump(scaler, scaler_filename)
+    print(f"Scaler saved to {scaler_filename}")
+    
+    # Split the data
     X_train, X_test, y_train, y_test = train_test_split(
         X_scaled, y, test_size=0.2, random_state=42
     )
-    
-    print(f"Data shapes: X_train: {X_train.shape}, y_train: {y_train.shape}")
-    print(f"Data shapes: X_test: {X_test.shape}, y_test: {y_test.shape}")
     
     return X_train, X_test, y_train, y_test
 
@@ -102,7 +97,7 @@ def build_model():
     model.add(Dropout(0.5))
     
     # A hidden Dense layer
-    model.add(Dense(32, activation='leaky-relu'))
+    model.add(Dense(32, activation='relu'))
     
     # Final output layer (1 neuron, sigmoid for 0-1 score)
     model.add(Dense(1, activation='sigmoid'))
