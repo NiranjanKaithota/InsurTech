@@ -1,8 +1,16 @@
 import pymongo
 import datetime
+import os
+from dotenv import load_dotenv
 
-# --- REPLACE THIS WITH YOUR CONNECTION STRING ---
-MONGO_URI = "mongodb+srv://niranjanskai23:asdfghjkl@tripdata.vmyrcn3.mongodb.net/?appName=TripData"
+# Load secrets from .env file
+load_dotenv()
+
+# Get the value
+MONGO_URI = os.getenv("MONGO_URI")
+
+if not MONGO_URI:
+    raise ValueError("MONGO_URI not found! Make sure .env file exists.")
 
 client = pymongo.MongoClient(MONGO_URI)
 db = client["ubi_database"]

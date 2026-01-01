@@ -6,9 +6,18 @@ import random
 import time
 import math
 import pymongo 
+import os
+from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
-MONGO_URI = "mongodb+srv://niranjanskai23:asdfghjkl@tripdata.vmyrcn3.mongodb.net/?appName=TripData"
+# Load secrets from .env file
+load_dotenv()
+
+# Get the value
+MONGO_URI = os.getenv("MONGO_URI")
+
+if not MONGO_URI:
+    raise ValueError("MONGO_URI not found! Make sure .env file exists.")
 
 DATA_DIR = "data/raw_human"
 TRIP_DURATION = 120          
