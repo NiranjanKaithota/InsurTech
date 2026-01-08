@@ -261,8 +261,16 @@ def play_trip(trip_id="human_0", style="human", user_id="u_001"):
         
         accel = net_force / CAR_MASS
         current_speed_ms += accel * TIMESTEP
-        if current_speed_ms < 0: current_speed_ms = 0
-        if current_speed_ms > 60: current_speed_ms = 60 
+        
+        # --- NEW SPEED LIMIT CAP ---
+        MAX_SPEED_KMH = 165.0  # Set your desired limit here
+        MAX_SPEED_MS = MAX_SPEED_KMH / 3.6
+        
+        if current_speed_ms < 0: 
+            current_speed_ms = 0
+        elif current_speed_ms > MAX_SPEED_MS: 
+            current_speed_ms = MAX_SPEED_MS  # Hard Cap
+            
         current_speed_kmh = current_speed_ms * 3.6
         
         is_speeding = 1 if current_speed_kmh > (current_limit_kmh + 2) else 0
