@@ -8,12 +8,10 @@ from tensorflow.keras.models import load_model
 import os
 from dotenv import load_dotenv
 import altair as alt
+from streamlit_option_menu import option_menu
 
-# --- CONFIGURATION ---
-# Load secrets from .env file
 load_dotenv()
 
-# Get the value
 MONGO_URI = os.getenv("MONGO_URI")
 
 if not MONGO_URI:
@@ -40,6 +38,65 @@ def load_ai_model():
     model = load_model(MODEL_PATH)
     scaler = joblib.load(SCALER_PATH)
     return model, scaler
+
+def calculate_personalized_premium(user_policy, risk_score, current_monthly_distance):
+    """
+    Calculates premium based on specific user add-ons and limits.
+    """
+    # 1. Extract Policy Details
+    config = user_policy.get('policy_config', {})
+    
+    base_fee = config.get('base_premium', 500)
+    dist_cap = config.get('distance_cap_km', 1000)
+    rate_normal = config.get('rate_within_cap', 2.0)
+    rate_overage = config.get('rate_overage', 10.0)
+    low_usage_thresh = config.get('low_usage_threshold', 100)
+    low_usage_disc = config.get('low_usage_discount', 100)
+
+    # 2. Calculate Risk Multiplier (Exponential Penalty for bad drivers)
+    # Score 0.1 -> 1.01x (Tiny penalty)
+    # Score 0.9 -> 1.81x (Huge penalty)
+    risk_multiplier = 1.0 + (risk_score ** 2)
+
+    # 3. Distance Logic (The "Cap" Feature)
+    dist_cost = 0.0
+    note = "Standard Usage"
+    
+    if current_monthly_distance <= low_usage_thresh:
+        # Scenario A: Low Usage Discount
+        dist_cost = current_monthly_distance * rate_normal
+        base_fee -= low_usage_disc  # Apply discount
+        note = "Low Usage Discount Applied ✅"
+        
+    elif current_monthly_distance <= dist_cap:
+        # Scenario B: Within Limit
+        dist_cost = current_monthly_distance * rate_normal
+        note = "Within Distance Cap"
+        
+    else:
+        # Scenario C: Overage Penalty
+        # First X kms are normal rate
+        normal_dist_cost = dist_cap * rate_normal
+        # Extra kms are at high rate
+        extra_km = current_monthly_distance - dist_cap
+        overage_cost = extra_km * rate_overage
+        
+        dist_cost = normal_dist_cost + overage_cost
+        note = f"⚠️ Overage Alert: Exceeded Cap by {extra_km:.1f} km"
+
+    # 4. Apply Risk Factor to the Distance Cost (Not the base fee)
+    # Bad drivers pay more to drive, but fixed fee remains fixed.
+    final_variable_cost = dist_cost * risk_multiplier
+    
+    total_premium = base_fee + final_variable_cost
+
+    return {
+        "Total Premium": round(total_premium, 2),
+        "Base Fee": base_fee,
+        "Variable Cost": round(final_variable_cost, 2),
+        "Risk Multiplier": round(risk_multiplier, 2),
+        "Status Note": note
+    }
 
 def render_trip_analysis(trip_data):
     """
@@ -261,7 +318,6 @@ def generate_trip_explanation(trip_data):
 
     return pd.DataFrame(events)
 
-
 def get_risk_verdict(score):
     if score < 0.3: return "SAFE", "🟢", "Discount Applied: -15%"
     if score < 0.7: return "MODERATE", "🟡", "Standard Premium"
@@ -291,255 +347,200 @@ def analyze_trip_ai(trip_data, model, scaler):
     
     return float(prediction)
 
-# --- MAIN APP ---
+# MAIN APP
 def main():
-    st.title("☁️ UBI Cloud Command Center")
-    st.markdown("### Real-Time Telematics & Premium Adjustment")
-    st.divider()
-
-    try:
-        model, scaler = load_ai_model()
-    except:
-        st.error("Model not found. Ensure models/driver_model.h5 exists.")
-        return
-
-    # Sidebar: User Selection from Cloud
-    st.sidebar.header("📁 Policy Holders")
-    users = list(db.users.find())
-    
-    if not users:
-        st.warning("No users in Cloud DB. Run db_setup.py")
-        return
-
-    user_names = [u['name'] for u in users]
-    selected_name = st.sidebar.selectbox("Select User", user_names)
-    selected_user = next(u for u in users if u['name'] == selected_name)
-    user_id = selected_user['user_id']
-
-    # Fetch Trips for this User from Cloud
-    trips = list(db.trips.find({"user_id": user_id}).sort("timestamp", -1))
-
-    # --- Metrics ---
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Policy No", selected_user.get("policy_no", "N/A"))
-    c2.metric("Vehicle", selected_user.get("vehicle", "N/A"))
-    c3.metric("Cloud Trips Logged", len(trips))
-
-    st.divider()
-
-    # --- Trip History Table ---
-    st.subheader(f"📡 Trip Feed: {selected_name}")
-    
-    trip_rows = []
-    pending_trips = []
-
-    for t in trips:
-        risk_val = t.get('risk_label')
+    # --- Sidebar Global Selection ---
+    with st.sidebar:
+        st.header("🚘 User Profile")
         
-        # Format Date
-        ts = t.get('timestamp', 0)
-        date_str = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M')
+        # Fetch Users
+        users = list(db.users.find())
+        if not users:
+            st.warning("No users found in Cloud DB.")
+            return
 
-        if risk_val is None:
-            status = "PENDING ⏳"
-            premium = "---"
-            pending_trips.append(t)
-        else:
-            verdict, icon, premium_adj = get_risk_verdict(risk_val)
-            status = f"{verdict} {icon}"
-            premium = premium_adj
+        user_names = [u['name'] for u in users]
+        selected_name = st.selectbox("Select Policy Holder", user_names)
+        selected_user = next(u for u in users if u['name'] == selected_name)
+        user_id = selected_user['user_id']
+        
+        # Display Mini Profile
+        st.caption(f"**ID:** {user_id}")
+        st.caption(f"**Plan:** {selected_user.get('policy_type', 'Standard')}")
+        st.caption(f"**Vehicle:** {selected_user.get('vehicle', 'Unknown')}")
+        
+        st.divider()
+        
+    # Navigation Menu
+    selected_page = option_menu(
+            menu_title=None,
+            options=["Dashboard", "New Trip Analysis", "Past Trip Analytics", "Premium & Policy"],
+            icons=["speedometer", "cpu", "graph-up-arrow", "currency-dollar"],
+            menu_icon="cast",
+            default_index=0,
+            orientation="horizontal",
+        )
+    # Fetch Trips for this User
+    trips = list(db.trips.find({"user_id": user_id}).sort("timestamp", -1))
+    
+    # --- PAGE 1: DASHBOARD (Trip Logs) ---
+    if selected_page == "Dashboard":
+        st.title(f"👋 Welcome, {selected_name}")
+        st.markdown("### 📡 Real-Time Trip Activity Log")
+        st.divider()
 
-        trip_rows.append({
-            "Trip ID": t.get('trip_id'),
-            "Date": date_str,
-            "Duration": f"{len(t['sequence'])/10:.1f}s",
-            "Status": status,
-            "Premium Action": premium
-        })
+        # Metrics Row
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Trips", len(trips))
+        total_dist = sum([t.get('total_distance_m', 0) for t in trips]) / 1000.0
+        c2.metric("Total Distance", f"{total_dist:.1f} km")
+        avg_score = np.mean([t.get('risk_label', 0.5) for t in trips if t.get('risk_label') is not None]) if trips else 0.5
+        c3.metric("Avg Risk Score", f"{avg_score:.2f}")
 
-    if trip_rows:
-        # st.dataframe(pd.DataFrame(trip_rows), use_container_width=True)
-        # st.subheader(f"📡 Trip Feed: {selected_name}")
-
+        st.subheader("Recent Activity")
         if not trips:
-            st.info("No trips found for this user.")
+            st.info("No activity logged yet.")
         else:
-            # 1. Show the Summary Table (Keep this as overview)
-            # Convert trips to a simplified DataFrame for the table
             summary_data = []
             for t in trips:
                 ts = t.get('timestamp', 0)
                 date_str = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M')
-                risk = t.get('risk_label', 'PENDING')
-                # Calculate Verdict if risk exists
-                if isinstance(risk, (int, float)):
-                    v_label, v_icon, _ = get_risk_verdict(risk)
-                    verdict_display = f"{v_label} {v_icon}"
-                    status_display = "✅ Processed"
-                    score_display = f"{risk:.4f}"
+                risk = t.get('risk_label')
+                
+                if risk is not None:
+                    verdict, icon, _ = get_risk_verdict(risk)
+                    display_status = f"{verdict} {icon}"
+                    score_disp = f"{risk:.4f}"
                 else:
-                    verdict_display = "---"
-                    status_display = "⏳ Pending"
-                    score_display = "---"
+                    display_status = "⏳ Pending Analysis"
+                    score_disp = "---"
 
                 summary_data.append({
-                    "Trip ID": t['trip_id'],
                     "Date": date_str,
-                    "Risk Score": score_display,
-                    "Status": status_display,
-                    "Verdict": verdict_display
+                    "Trip ID": t['trip_id'],
+                    "Distance (km)": f"{t.get('total_distance_m',0)/1000:.1f}",
+                    "Risk Score": score_disp,
+                    "Status": display_status
                 })
-
+            
             st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
 
-            st.divider()
+    # --- PAGE 2: NEW TRIP ANALYSIS (Pending Actions) ---
+    elif selected_page == "New Trip Analysis":
+        st.title("⚡ AI Risk Assessment Center")
+        st.caption("Process raw telemetry data from vehicle to generate risk insights.")
+        st.divider()
 
-            # 2. Trip Detail Viewer
-            st.markdown("### 🔍 Inspect Past Trip")
+        pending_trips = [t for t in trips if t.get('risk_label') is None]
 
-            # Create a dropdown with formatted labels
-            trip_options = {f"{t['trip_id']} ({datetime.datetime.fromtimestamp(t.get('timestamp',0)).strftime('%m-%d %H:%M')})": t for t in trips}
+        if not pending_trips:
+            st.success("✅ All trips have been processed! No pending actions.")
+        else:
+            st.info(f"You have {len(pending_trips)} pending trips to analyze.")
+            
+            # Selector
+            trip_options = {f"{t['trip_id']} ({datetime.datetime.fromtimestamp(t.get('timestamp',0)).strftime('%H:%M')})": t for t in pending_trips}
+            selected_option_id = st.selectbox("Select Pending Trip", list(trip_options.keys()))
+            target_trip = trip_options[selected_option_id]
 
-            selected_option = st.selectbox("Select a trip to view full analysis:", list(trip_options.keys()))
+            if st.button("🚀 Run AI Analysis", type="primary"):
+                 with st.spinner("Running LSTM Model & Explainability Engine..."):
+                    try:
+                        model, scaler = load_ai_model()
+                        # 1. Prediction
+                        score = analyze_trip_ai(target_trip, model, scaler)
+                        # 2. Explanation
+                        explanation_df = generate_trip_explanation(target_trip)
+                        # 3. Update DB
+                        db.trips.update_one({"_id": target_trip["_id"]}, {"$set": {"risk_label": score}})
+                        
+                        st.success(f"Analysis Complete! Risk Score: {score:.4f}")
+                        verdict, icon, adj = get_risk_verdict(score)
+                        st.metric("Verdict", f"{verdict} {icon}", delta=adj)
 
+                        # Show Graph Immediately
+                        render_trip_analysis(target_trip)
+                        
+                    except Exception as e:
+                        st.error(f"Analysis Failed: {str(e)}")
+
+    # --- PAGE 3: PAST TRIP ANALYTICS (Detailed Graph View) ---
+    elif selected_page == "Past Trip Analytics":
+        st.title("🔍 Historical Forensics")
+        st.caption("Deep dive into past driving behavior and anomalies.")
+        st.divider()
+
+        processed_trips = [t for t in trips if t.get('risk_label') is not None]
+        
+        if not processed_trips:
+            st.warning("No processed trips available. Please analyze a trip first.")
+        else:
+            trip_options = {f"{t['trip_id']} | Risk: {t['risk_label']:.2f} | {datetime.datetime.fromtimestamp(t.get('timestamp',0)).strftime('%Y-%m-%d %H:%M')}": t for t in processed_trips}
+            selected_option = st.selectbox("Select Historical Trip", list(trip_options.keys()))
+            
             if selected_option:
                 selected_trip = trip_options[selected_option]
-
-                # Show the Score again prominently
-                score = selected_trip.get('risk_label')
-                if score is not None:
-                    verdict, icon, adj = get_risk_verdict(score)
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Risk Score", f"{score:.4f}")
-                    c2.metric("Verdict", f"{verdict} {icon}")
-                    c3.metric("Premium Impact", adj)
-                else:
-                    st.info("This trip has not been processed yet. Go to 'Action Required' below.")
-
-                # --- CALL THE REUSABLE FUNCTION ---
                 render_trip_analysis(selected_trip)
-    else:
-        st.info("Waiting for data from vehicle...")
 
-    # --- Validation Section ---
-    st.divider()
-    
-    if pending_trips:
-        st.subheader("⚡ Action Required: New Trip Data Received")
+    # --- PAGE 4: PREMIUM & POLICY (Financials) ---
+    elif selected_page == "Premium & Policy":
+        st.title("💰 Smart Premium Calculator")
+        st.markdown("### Personalized Billing based on AI Risk & Usage")
+        st.divider()
+
+        # 1. Policy Details Section
+        st.subheader("📜 Policy Configuration")
+        config = selected_user.get('policy_config', {})
         
-        # Select trip
-        trip_options = {t['trip_id']: t for t in pending_trips}
-        selected_trip_id = st.selectbox("Select Trip to Analyze", list(trip_options.keys()))
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Base Plan Fee", f"₹{config.get('base_premium', 500)}")
+        c2.metric("Distance Cap", f"{config.get('distance_cap_km', 1000)} km")
+        c3.metric("Overage Rate", f"₹{config.get('rate_overage', 10)}/km")
+        c4.metric("Low Usage Limit", f"{config.get('low_usage_threshold', 100)} km")
+
+        with st.expander("ℹ️ View Calculation Formula"):
+            st.latex(r"P_{total} = P_{base} + (Dist \times Rate_{plan} \times (1 + Score^2))")
+            st.markdown("""
+            * **Logic:**
+            * If `Distance < Low_Usage_Limit`: Apply Discount.
+            * If `Distance > Cap`: Apply Overage Penalty Rate.
+            * **Risk Multiplier:** $(1 + RiskScore^2)$ scales the usage cost.
+            """)
+
+        st.divider()
+
+        # 2. Simulation Section
+        st.subheader("💳 Current Month Bill Simulation")
         
-        if st.button("Run AI Risk Assessment", type="primary"):
-            target_trip = trip_options[selected_trip_id]
-            
-            with st.spinner("Fetching data from cloud & processing..."):
-                # 1. Run Model
-                score = analyze_trip_ai(target_trip, model, scaler)
-                
-                # 2. Run Explainability Engine
-                explanation_df = generate_trip_explanation(target_trip)
-                
-                # 3. Update Cloud DB
-                db.trips.update_one(
-                    {"_id": target_trip["_id"]},
-                    {"$set": {"risk_label": score}}
-                )
-                
-            # --- DISPLAY RESULTS ---
-            verdict, icon, adj = get_risk_verdict(score)
-            
-            st.success(f"Risk Score: {score:.4f}")
-            st.info(f"Verdict: {verdict} {icon}")
-            st.warning(f"Recommended Action: **{adj}**")
-            
-            st.divider()
-            st.subheader("🔍 Risk Explainability Visualization")
-            
-            if not explanation_df.empty:
-                # 1. Prepare Data for Plotting
-                # Merge point events into highlight regions
-                intervals_df = merge_events_to_intervals(explanation_df)
-                
-                # Prepare Trip Data (Speed vs Time)
-                trip_df = pd.DataFrame(target_trip['sequence'])
-                
-                # 2. Build the Altair Chart
-                
-                # Layer A: The "Danger Zones" (Background Highlights)
-                highlights = alt.Chart(intervals_df).mark_rect(opacity=0.3).encode(
-                    x=alt.X('start', title='Time (seconds)'),
-                    x2='end',
-                    y=alt.value(0),  # Top of chart
-                    y2=alt.value(300), # Bottom of chart (pixels)
-                    color=alt.Color('type', legend=alt.Legend(title="Risk Type"), 
-                                  scale=alt.Scale(domain=['Speeding', 'Hard Brake', 'Rapid Accel'], 
-                                                  range=['#ffa500', '#ff0000', '#ffee00'])),
-                    tooltip=['type', 'start', 'end']
-                )
-                
-                # Layer B: Speed Limit Line (Green Dashed)
-                limit_line = alt.Chart(trip_df).mark_line(strokeDash=[5, 5], color='green').encode(
-                    x='time',
-                    y='speed_limit'
-                )
-                
-                # Layer C: Actual Speed Line (Blue)
-                speed_line = alt.Chart(trip_df).mark_line(color='#00CCFF').encode(
-                    x='time',
-                    y=alt.Y('speed', title='Speed (km/h)'),
-                    tooltip=['time', 'speed', 'speed_limit', 'acceleration']
-                )
-                
-                # Combine Layers
-                combined_chart = (highlights + limit_line + speed_line).properties(
-                    width=800, 
-                    height=400,
-                    title="Velocity Profile with Risk Anomaly Regions"
-                ).interactive()
-                
-                st.altair_chart(combined_chart, use_container_width=True)
-                
-                # 3. Concise Summary Metrics (Optional, below graph)
-                c1, c2 = st.columns(2)
-                c1.info(f"**Speeding Duration:** {intervals_df[intervals_df['type']=='Speeding']['end'].sub(intervals_df[intervals_df['type']=='Speeding']['start']).sum():.1f} sec total")
-                c2.error(f"**Hard Brakes:** {len(intervals_df[intervals_df['type']=='Hard Brake'])} distinct events")
-
-            else:
-                st.success("✅ Clean Record: No risky events detected.")
-
-            if st.button("Refresh Data"):
-                st.rerun()
-
-    else:
-        st.success("All cloud data is up to date.")
+        # In a real app, this would be sum of all trips this month.
+        # For demo, let's select a trip to simulate adding it to the bill.
+        latest_trip = trips[0] if trips else None
         
-    st.sidebar.divider()
-    st.sidebar.header("⚙️ Model Maintenance")
-    
-    if st.sidebar.button("Retrain Model with New Data"):
-        with st.spinner("Fetching new trips and updating model..."):
-            try:
-                # 1. Fetch ALL data from Mongo
-                all_trips = list(db.trips.find({"risk_label": {"$ne": None}})) # Only labeled trips
+        if latest_trip:
+            # We use the latest trip's distance + risk for the simulation
+            sim_dist = latest_trip.get('total_distance_m', 0) / 1000.0
+            sim_score = latest_trip.get('risk_label', 0.5)
+            
+            if sim_score is None: sim_score = 0.5 # Handle pending
+
+            # Calculate
+            financials = calculate_personalized_premium(selected_user, sim_score, sim_dist)
+
+            # Display Bill
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                st.info(f"**Simulation Context**\n\nTrip Dist: {sim_dist:.2f} km\n\nRisk Score: {sim_score:.4f}")
+            
+            with col2:
+                b1, b2, b3 = st.columns(3)
+                b1.metric("Base Fee", f"₹{financials['Base Fee']}")
+                b2.metric("Usage Cost", f"₹{financials['Variable Cost']}")
+                b3.metric("Total Estimate", f"₹{financials['Total Premium']}", delta=financials['Status Note'])
                 
-                if len(all_trips) < 10:
-                    st.sidebar.error("Not enough labeled data to retrain (Need > 10).")
-                else:
-                    # 2. Prepare Data (Reuse your preprocessing logic here)
-                    # Note: For a real demo, you'd likely import a function from train_model.py
-                    # Here is a simplified placeholder concept:
-                    
-                    # X_new, y_new = preprocess_mongo_data(all_trips)
-                    # model.fit(X_new, y_new, epochs=5)
-                    # model.save("models/driver_model.h5")
-                    
-                    st.sidebar.success(f"Model successfully updated with {len(all_trips)} trips!")
-                    # st.balloons()
-                    
-            except Exception as e:
-                st.sidebar.error(f"Retraining Failed: {str(e)}")
+                st.caption(f"Applied Risk Multiplier: **{financials['Risk Multiplier']}x**")
+        else:
+            st.warning("No trip data available to simulate bill.")
 
 if __name__ == "__main__":
     main()

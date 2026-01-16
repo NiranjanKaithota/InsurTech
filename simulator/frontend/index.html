@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UBI Live Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;600&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <!-- Background Game Canvas -->
+    <canvas id="game-canvas"></canvas>
+
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header>
+            <h1>DRIVING DNA <span class="badge">LIVE</span></h1>
+            <div class="connection-status">CONNECTED</div>
+        </header>
+
+        <!-- Main Display -->
+        <main>
+            <!-- Speed Gauge Section -->
+            <div class="card speed-card">
+                <h2>SPEED</h2>
+                <div class="gauge-container">
+                    <svg class="speed-gauge" viewBox="0 0 200 200">
+                        <!-- Background Circle -->
+                        <circle class="gauge-bg" cx="100" cy="100" r="90" />
+                        <!-- Progress Arc -->
+                        <circle class="gauge-progress" cx="100" cy="100" r="90" transform="rotate(-90 100 100)" />
+                        <!-- Value Text -->
+                        <text x="50%" y="55%" text-anchor="middle" class="speed-value" id="speed">0</text>
+                        <text x="50%" y="75%" text-anchor="middle" class="unit">KM/H</text>
+                    </svg>
+                    <div class="limit-indicator">
+                        LIMIT <span id="limit">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stats & Pedals -->
+            <div class="side-panel">
+                <!-- Risk Indicator -->
+                <div class="card risk-card">
+                    <h2>RISK ANALYSIS</h2>
+                    <div id="risk" class="status-indicator safe">SAFE</div>
+                </div>
+
+                <!-- Pedals -->
+                <div class="card pedals-card">
+                    <h2>TELEMETRY</h2>
+                    <div class="pedal-group">
+                        <div class="pedal-label">THROTTLE</div>
+                        <div class="pedal-bar-container">
+                            <div id="throttle" class="pedal-bar throttle-bar"></div>
+                        </div>
+                        <div class="pedal-value" id="throttle-val">0%</div>
+                    </div>
+                    <div class="pedal-group">
+                        <div class="pedal-label">BRAKE</div>
+                        <div class="pedal-bar-container">
+                            <div id="brake" class="pedal-bar brake-bar"></div>
+                        </div>
+                        <div class="pedal-value" id="brake-val">0%</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+
+</html>

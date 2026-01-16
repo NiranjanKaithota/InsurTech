@@ -23,7 +23,7 @@ def predict_trip(file_path):
     # 1. Load Model and Scaler
     if not os.path.exists(MODEL_PATH) or not os.path.exists(SCALER_PATH):
         print("Error: Model or Scaler not found. Train the model first!")
-        return
+        return 
 
     model = load_model(MODEL_PATH)
     scaler = joblib.load(SCALER_PATH)
