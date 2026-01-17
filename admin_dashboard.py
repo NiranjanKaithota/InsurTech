@@ -418,7 +418,7 @@ def main():
                 summary_data.append({
                     "Date": date_str,
                     "Trip ID": t['trip_id'],
-                    "Distance (km)": f"{t.get('total_distance_m',0)/1000:.1f}",
+                    "Distance (km)": f"{t.get('total_distance_m',0)/1000:.3f}",
                     "Risk Score": score_disp,
                     "Status": display_status
                 })
@@ -480,6 +480,18 @@ def main():
             
             if selected_option:
                 selected_trip = trip_options[selected_option]
+                
+                score = selected_trip.get('risk_label', 0.0)
+                verdict, icon, adj = get_risk_verdict(score)
+                
+                # Display metrics in 3 columns
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Predicted Risk Score", f"{score:.4f}")
+                c2.metric("Verdict", f"{verdict} {icon}")
+                c3.metric("Premium Impact", adj)
+                
+                st.divider()
+                
                 render_trip_analysis(selected_trip)
 
     # --- PAGE 4: PREMIUM & POLICY (Financials) ---
@@ -488,9 +500,24 @@ def main():
         st.markdown("### Personalized Billing based on AI Risk & Usage")
         st.divider()
 
-        # 1. Policy Details Section
-        st.subheader("📜 Policy Configuration")
+        # --- 1. PRE-CALCULATE DATA (Moved Up) ---
+        # We calculate this first so we can use the numbers in the formula display below
         config = selected_user.get('policy_config', {})
+        latest_trip = trips[0] if trips else None
+        
+        financials = None
+        sim_dist = 0.0
+        sim_score = 0.5
+        
+        if latest_trip:
+            sim_dist = latest_trip.get('total_distance_m', 0) / 1000.0
+            sim_score = latest_trip.get('risk_label', 0.5)
+            if sim_score is None: sim_score = 0.5
+            
+            financials = calculate_personalized_premium(selected_user, sim_score, sim_dist)
+
+        # --- 2. DISPLAY POLICY CONFIG ---
+        st.subheader("📜 Policy Configuration")
         
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Base Plan Fee", f"₹{config.get('base_premium', 500)}")
@@ -498,34 +525,45 @@ def main():
         c3.metric("Overage Rate", f"₹{config.get('rate_overage', 10)}/km")
         c4.metric("Low Usage Limit", f"{config.get('low_usage_threshold', 100)} km")
 
+        # --- 3. FORMULA EXPLANATION (Updated) ---
         with st.expander("ℹ️ View Calculation Formula"):
+            # Generic Formula
+            st.markdown("**The Mathematical Model:**")
             st.latex(r"P_{total} = P_{base} + (Dist \times Rate_{plan} \times (1 + Score^2))")
+            
+            # Plugged-in Values (Dynamic)
+            if financials:
+                st.divider()
+                st.markdown("**Applied Values (Current Simulation):**")
+                
+                # Get the rate used (Normal vs Overage is complex, so we show the effective rate calculation visually)
+                # For clarity in the formula, we use the Base Rate variable, but note that 'Dist * Rate' 
+                # might be split if overage occurred.
+                rate_disp = config.get('rate_within_cap', 2.0)
+                base_disp = financials['Base Fee'] # Includes discounts if any
+                total_disp = financials['Total Premium']
+                
+                # Construct the LaTeX string with actual numbers
+                # Example: 750.00 = 500 + (12.5 * 2.0 * (1 + 0.45^2))
+                applied_formula = (
+                    f"{total_disp} = {base_disp} + "
+                    f"({sim_dist:.2f} \\times {rate_disp} \\times (1 + {sim_score:.4f}^2))"
+                )
+                st.latex(applied_formula)
+            
             st.markdown("""
             * **Logic:**
-            * If `Distance < Low_Usage_Limit`: Apply Discount.
-            * If `Distance > Cap`: Apply Overage Penalty Rate.
-            * **Risk Multiplier:** $(1 + RiskScore^2)$ scales the usage cost.
+            * If `Distance < Low_Usage_Limit`: Apply Discount to $P_{base}$.
+            * If `Distance > Cap`: $Rate_{plan}$ increases for excess km.
+            * **Risk Multiplier:** $(1 + RiskScore^2)$ scales the usage cost exponentially.
             """)
 
         st.divider()
 
-        # 2. Simulation Section
+        # --- 4. SIMULATION RESULTS ---
         st.subheader("💳 Current Month Bill Simulation")
         
-        # In a real app, this would be sum of all trips this month.
-        # For demo, let's select a trip to simulate adding it to the bill.
-        latest_trip = trips[0] if trips else None
-        
-        if latest_trip:
-            # We use the latest trip's distance + risk for the simulation
-            sim_dist = latest_trip.get('total_distance_m', 0) / 1000.0
-            sim_score = latest_trip.get('risk_label', 0.5)
-            
-            if sim_score is None: sim_score = 0.5 # Handle pending
-
-            # Calculate
-            financials = calculate_personalized_premium(selected_user, sim_score, sim_dist)
-
+        if financials:
             # Display Bill
             col1, col2 = st.columns([1, 2])
             

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Driving DNA - Simulator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        /* --- CYBERPUNK STYLING --- */
+        :root {
+            --bg-color: #0a0a12;
+            --text-color: #e0e0ff;
+            --neon-blue: #00f3ff;
+            --neon-pink: #ff00ff;
+            --neon-green: #39ff14;
+            --neon-red: #ff3f3f;
+            --panel-bg: rgba(20, 20, 35, 0.9);
+        }
+
+        body {
+            margin: 0; padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Courier New', Courier, monospace;
+            background-image: 
+                linear-gradient(rgba(0, 243, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 243, 255, 0.05) 1px, transparent 1px);
+            background-size: 40px 40px;
+            height: 100vh;
+            overflow: hidden;
+            display: flex; justify-content: center; align-items: center;
+        }
+
+        /* --- SCREEN 1: LOGIN --- */
+        #login-screen {
+            display: block; /* Visible by default */
+            text-align: center;
+            background: var(--panel-bg);
+            padding: 50px 70px;
+            border: 2px solid var(--neon-blue);
+            border-radius: 20px;
+            box-shadow: 0 0 40px rgba(0, 243, 255, 0.15);
+            z-index: 10;
+        }
+
+        h1 { font-size: 2.5rem; margin-bottom: 10px; text-transform: uppercase; text-shadow: 0 0 10px var(--neon-blue); }
+        
+        input {
+            padding: 15px; font-size: 1.2rem;
+            background: rgba(0,0,0,0.5); border: 1px solid var(--neon-blue);
+            color: white; border-radius: 5px; margin-bottom: 25px;
+            width: 280px; text-align: center; font-family: inherit;
+        }
+
+        .btn-start {
+            padding: 15px 50px; font-size: 1.2rem;
+            background: var(--neon-blue); color: black; border: none;
+            border-radius: 5px; cursor: pointer; font-weight: bold;
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+        .btn-start:hover { background: white; box-shadow: 0 0 25px white; transform: scale(1.05); }
+
+        /* --- SCREEN 2: SIMULATOR --- */
+        #sim-screen {
+            display: none; /* <--- FIXED: Hidden by default */
+            width: 90%; height: 90%;
+            max-width: 1200px;
+            /* Grid layout properties are ready but not active until JS sets display: grid */
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: auto 1fr auto;
+            gap: 20px;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            border: 2px solid var(--neon-blue);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 0 15px rgba(0, 243, 255, 0.1);
+            backdrop-filter: blur(5px);
+        }
+
+        /* Header & Timer */
+        .header-bar { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; }
+        .timer-display {
+            font-size: 2.5rem; color: var(--neon-pink);
+            border: 2px solid var(--neon-pink);
+            padding: 5px 25px; border-radius: 10px;
+            background: rgba(0,0,0,0.6);
+            text-shadow: 0 0 10px var(--neon-pink);
+        }
+
+        /* Speedometer */
+        .speed-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .speed-gauge-rim {
+            width: 250px; height: 250px; border-radius: 50%;
+            background: conic-gradient(var(--neon-blue) 0deg, #333 0deg);
+            display: flex; justify-content: center; align-items: center;
+            box-shadow: 0 0 30px rgba(0, 243, 255, 0.2);
+            transition: background 0.1s linear;
+        }
+        .speed-gauge-inner {
+            width: 200px; height: 200px; border-radius: 50%;
+            background: var(--bg-color);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+        }
+        #speed-val { font-size: 5rem; font-weight: bold; margin: 0; line-height: 1; }
+
+        /* Telemetry */
+        .telemetry-panel { display: flex; flex-direction: column; gap: 15px; }
+        .bar-container { flex-grow: 1; height: 20px; background: #333; margin: 0 15px; border-radius: 10px; overflow: hidden; }
+        .bar-fill { height: 100%; width: 0%; transition: width 0.1s linear; }
+        #throttle-bar { background: var(--neon-green); }
+        #brake-bar { background: var(--neon-red); }
+
+        /* Risk Badge */
+        .risk-panel { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        #risk-badge {
+            font-size: 3rem; padding: 15px 40px;
+            border: 4px solid var(--neon-green); color: var(--neon-green);
+            text-shadow: 0 0 20px var(--neon-green); border-radius: 10px;
+        }
+
+        /* --- PAUSE MODAL --- */
+        #pause-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 100;
+            justify-content: center; align-items: center;
+            flex-direction: column;
+        }
+        .modal-content {
+            background: #111;
+            border: 2px solid var(--neon-red);
+            padding: 40px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 0 50px var(--neon-red);
+            min-width: 400px;
+        }
+        .modal-title { font-size: 2rem; color: var(--neon-red); margin-bottom: 30px; text-transform: uppercase;}
+        .btn-option {
+            display: block; width: 100%;
+            padding: 15px; margin: 10px 0;
+            font-size: 1.2rem; font-family: inherit; font-weight: bold;
+            cursor: pointer; border-radius: 5px; border: none;
+        }
+        .btn-save { background: var(--neon-green); color: black; }
+        .btn-force { background: #555; color: white; border: 1px solid #777;}
+        .btn-force:hover { background: var(--neon-red); }
+        .btn-resume { background: transparent; color: #888; border: 1px solid #444; margin-top: 20px;}
+        .btn-resume:hover { color: white; border-color: white;}
+    </style>
+</head>
+<body>
+
+    <div id="login-screen">
+        <h1>Driving DNA</h1>
+        <p style="color: #aaa; margin-bottom: 30px;">UBI TELEMATICS SIMULATOR</p>
+        <input type="text" id="user-input" placeholder="Enter Driver ID (e.g. u_001)" value="u_001">
+        <br>
+        <button class="btn-start" onclick="startTrip()">START DRIVE</button>
+    </div>
+
+    <div id="sim-screen">
+        <div class="header-bar">
+            <h2 style="margin:0; font-size: 1.5rem;">DRIVER: <span id="driver-display" style="color:var(--neon-blue)">---</span></h2>
+            <div class="timer-display" id="timer-val">02:00</div>
+        </div>
+
+        <div class="panel speed-panel">
+            <div class="speed-gauge-rim" id="gauge-rim">
+                <div class="speed-gauge-inner">
+                    <h2 id="speed-val">0</h2>
+                    <span style="color: #888;">KM/H</span>
+                </div>
+            </div>
+            <div style="margin-top: 20px; font-size: 1.5rem;">LIMIT: <span id="limit-val" style="color:var(--neon-pink)">60</span></div>
+        </div>
+
+        <div class="panel" style="grid-row: 2/3; grid-column: 1/-1; display:flex; justify-content:center; align-items:center;">
+            <h3 style="color:#555;">[ SIMULATION ACTIVE - PRESS 'ESC' TO PAUSE ]</h3>
+        </div>
+
+        <div class="panel telemetry-panel">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span>GAS</span>
+                <div class="bar-container"><div id="throttle-bar" class="bar-fill"></div></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span>BRK</span>
+                <div class="bar-container"><div id="brake-bar" class="bar-fill"></div></div>
+            </div>
+            <div style="text-align:center; font-size: 1.2rem; margin-top: 10px;">
+                Distance: <span id="dist-val" style="color:white">0</span> m
+            </div>
+        </div>
+
+        <div class="panel risk-panel">
+            <div id="risk-badge">SAFE</div>
+        </div>
+    </div>
+
+    <div id="pause-modal">
+        <div class="modal-content">
+            <div class="modal-title">Trip Paused</div>
+            <button class="btn-option btn-save" onclick="chooseOption('save')">💾 SAVE LOG & QUIT</button>
+            <button class="btn-option btn-force" onclick="chooseOption('force')">🚫 FORCE QUIT (NO SAVE)</button>
+            <button class="btn-option btn-resume" onclick="togglePause()">Resume Driving</button>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let isDriving = false;
+        let isPaused = false;
+
+        // UI Refs
+        const loginScreen = document.getElementById('login-screen');
+        const simScreen = document.getElementById('sim-screen');
+        const pauseModal = document.getElementById('pause-modal');
+        const driverDisplay = document.getElementById('driver-display');
+        const userInput = document.getElementById('user-input');
+        
+        // Sim Refs
+        const timerVal = document.getElementById('timer-val');
+        const speedVal = document.getElementById('speed-val');
+        const limitVal = document.getElementById('limit-val');
+        const gaugeRim = document.getElementById('gauge-rim');
+        const riskBadge = document.getElementById('risk-badge');
+        const throttleBar = document.getElementById('throttle-bar');
+        const brakeBar = document.getElementById('brake-bar');
+        const distVal = document.getElementById('dist-val');
+
+        // --- SCREEN SWITCHING LOGIC ---
+        function startTrip() {
+            const user = userInput.value.trim() || "u_guest";
+            driverDisplay.innerText = user;
+            
+            // Hide Login, Show Sim (Grid)
+            loginScreen.style.display = 'none';
+            simScreen.style.display = 'grid';
+            
+            socket.emit('start_trip', { user_id: user });
+            isDriving = true;
+            isPaused = false;
+        }
+
+        // --- PAUSE LOGIC ---
+        function togglePause() {
+            if (!isDriving) return;
+            
+            isPaused = !isPaused;
+            if (isPaused) {
+                pauseModal.style.display = 'flex';
+                socket.emit('pause_toggle', { paused: true });
+            } else {
+                pauseModal.style.display = 'none';
+                socket.emit('pause_toggle', { paused: false });
+            }
+        }
+
+        function chooseOption(choice) {
+            if (choice === 'save') {
+                socket.emit('driver_choice', { choice: 'save' });
+            } else {
+                if(confirm("Are you sure? All data for this trip will be lost.")) {
+                    socket.emit('driver_choice', { choice: 'force' });
+                }
+            }
+        }
+
+        // --- KEY LISTENERS ---
+        document.addEventListener('keydown', (e) => {
+            // If on login screen, Enter starts the trip
+            if (!isDriving && loginScreen.style.display !== 'none' && e.key === "Enter") {
+                startTrip();
+                return;
+            }
+
+            if (!isDriving) return;
+            
+            if (e.key === "Escape") {
+                togglePause();
+                return;
+            }
+
+            if (isPaused) return;
+
+            if (e.key.toLowerCase() === 'w' || e.key === 'ArrowUp') socket.emit('control_input', {key: 'up', pressed: true});
+            if (e.key.toLowerCase() === 's' || e.key === 'ArrowDown') socket.emit('control_input', {key: 'down', pressed: true});
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (!isDriving || isPaused) return;
+            if (e.key.toLowerCase() === 'w' || e.key === 'ArrowUp') socket.emit('control_input', {key: 'up', pressed: false});
+            if (e.key.toLowerCase() === 's' || e.key === 'ArrowDown') socket.emit('control_input', {key: 'down', pressed: false});
+        });
+
+        // --- SOCKET UPDATES ---
+        socket.on('update_state', (data) => {
+            if (!isDriving || isPaused) return; 
+
+            const mins = Math.floor(data.time_remaining / 60);
+            const secs = data.time_remaining % 60;
+            timerVal.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            if (data.time_remaining < 10) timerVal.style.color = "var(--neon-red)";
+
+            speedVal.innerText = Math.floor(data.speed_kmh);
+            limitVal.innerText = data.speed_limit;
+            distVal.innerText = Math.floor(data.distance_m);
+
+            const speedDeg = (data.speed_kmh / 180) * 360;
+            gaugeRim.style.background = `conic-gradient(var(--neon-blue) 0deg, var(--neon-blue) ${speedDeg}deg, #333 ${speedDeg}deg)`;
+
+            throttleBar.style.width = (data.throttle_input * 100) + "%";
+            brakeBar.style.width = (data.brake_input * 100) + "%";
+
+            riskBadge.innerText = data.risk_status;
+            if (data.risk_status === "SAFE") riskBadge.style.borderColor = "var(--neon-green)";
+            else if (data.risk_status === "MODERATE") riskBadge.style.borderColor = "yellow";
+            else riskBadge.style.borderColor = "var(--neon-red)";
+        });
+
+        socket.on('trip_completed', (data) => {
+            isDriving = false;
+            pauseModal.style.display = 'none';
+            if(data.aborted) {
+                alert("Trip Aborted.");
+                location.reload();
+            }
+        });
+
+        socket.on('upload_status', (data) => {
+            alert(data.msg);
+            location.reload();
+        });
+
+    </script>
+</body>
+</html>
