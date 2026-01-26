@@ -14,5 +14,6 @@ __pycache__/
 *.pptx
 *.pdf
 *.txt
+*.png
 
 training_loss_plot.png
